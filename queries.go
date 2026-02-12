@@ -19,6 +19,33 @@ type Query struct {
 
 // FindingQueries are "actionable" hygiene/remediation findings.
 var FindingQueries = []Query{
+	// --- Baseline inventory (always first tabs) ---
+	{
+		ID:           "ad-all-users-samaccountname",
+		Title:        "All users (samAccountName)",
+		Category:     "AD",
+		SheetName:    "All Users",
+		Headers:      []string{"samaccountname"},
+		Description:  "All users in the domain (samAccountName)",
+		FindingTitle: "",
+		Cypher: `MATCH (u:User)
+WHERE u.samaccountname IS NOT NULL
+RETURN u.samaccountname AS samaccountname
+ORDER BY samaccountname`,
+	},
+	{
+		ID:           "ad-all-computers-fqdn",
+		Title:        "All computers (FQDN)",
+		Category:     "AD",
+		SheetName:    "All Computers",
+		Headers:      []string{"fqdn"},
+		Description:  "All computers in the domain (FQDN/hostname)",
+		FindingTitle: "",
+		Cypher: `MATCH (c:Computer)
+RETURN c.name AS fqdn
+ORDER BY fqdn`,
+	},
+
 	// --- Ported from bloodyEll_example (findings) ---
 	{
 		ID:           "ad-unconstrained-delegation-non-dc",
@@ -89,7 +116,7 @@ WHERE u.pwdlastset < (datetime().epochseconds - (730 * 86400))
   AND NOT u.pwdlastset IN [-1.0, 0.0]
   AND u.enabled=true
 RETURN u.name AS user, u.pwdlastset AS pwdlastset, u.hasspn AS service_acct
-ORDER BY service_acct DESC, pwdlastset`,
+ORDER BY service_acct DESC, pwdlastset DESC`,
 	},
 	{
 		ID:           "ad-domain-admin-sessions-non-dc",
@@ -452,7 +479,7 @@ ORDER BY group`,
 		FindingTitle: "[VARIABLE]",
 		Cypher: `Match (u:User)-[:MemberOf]->(g:Group)
 WHERE g.name =~ '.*VPN.*'
-RETURN u.name AS user, g.name AS group`,
+RETURN u.name AS user, g.name AS groupname`,
 	},
 	{
 		ID:           "info-groups-force-change-password",

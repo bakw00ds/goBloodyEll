@@ -286,7 +286,10 @@ func writeConsole(outs []queryOutput) {
 	for _, o := range outs {
 		fmt.Println(o.Query.SheetName)
 		fmt.Println(o.Query.Description)
-		fmt.Println("finding title:", o.Query.FindingTitle)
+		if !strings.EqualFold(o.Query.Category, "INFO") && strings.TrimSpace(o.Query.FindingTitle) != "" {
+			fmt.Println("finding title:", o.Query.FindingTitle)
+		}
+		fmt.Println("neo4j query:", oneLine(o.Query.Cypher))
 		fmt.Println()
 		if o.Error != "" {
 			fmt.Println("ERROR:", o.Error)
@@ -300,12 +303,12 @@ func writeConsole(outs []queryOutput) {
 			for _, h := range o.Query.Headers {
 				key := headerToKey(h)
 				if v, ok := r[key]; ok {
-					vals = append(vals, fmt.Sprintf("%v", v))
+					vals = append(vals, formatValue(key, v))
 				}
 			}
 			if len(vals) == 0 {
-				for _, v := range r {
-					vals = append(vals, fmt.Sprintf("%v", v))
+				for k, v := range r {
+					vals = append(vals, formatValue(k, v))
 				}
 			}
 			fmt.Println(strings.Join(vals, ", "))
@@ -326,7 +329,10 @@ func writeTextFile(outs []queryOutput, path string) error {
 	for _, o := range outs {
 		_, _ = w.WriteString(o.Query.SheetName + "\n")
 		_, _ = w.WriteString(o.Query.Description + "\n")
-		_, _ = w.WriteString("finding title: " + o.Query.FindingTitle + "\n\n")
+		if !strings.EqualFold(o.Query.Category, "INFO") && strings.TrimSpace(o.Query.FindingTitle) != "" {
+			_, _ = w.WriteString("finding title: " + o.Query.FindingTitle + "\n")
+		}
+		_, _ = w.WriteString("neo4j query: " + oneLine(o.Query.Cypher) + "\n\n")
 		if o.Error != "" {
 			_, _ = w.WriteString("ERROR: " + o.Error + "\n")
 			_, _ = w.WriteString(strings.Repeat("=", 100) + "\n")
@@ -343,7 +349,7 @@ func writeTextFile(outs []queryOutput, path string) error {
 			for _, k := range keys {
 				v := r[k]
 				if v != nil {
-					vals = append(vals, fmt.Sprintf("%v", v))
+					vals = append(vals, formatValue(k, v))
 				}
 			}
 			_, _ = w.WriteString(strings.Join(vals, ",") + "\n")
@@ -355,29 +361,30 @@ func writeTextFile(outs []queryOutput, path string) error {
 
 func writeXLSX(outs []queryOutput, path string) error {
 	f := excelize.NewFile()
-	// remove default sheet
-	defaultSheet := f.GetSheetName(0)
-	if defaultSheet != "" {
-		_ = f.DeleteSheet(defaultSheet)
-	}
+	// remove default sheet (excelize.NewFile() starts with Sheet1)
+	_ = f.DeleteSheet("Sheet1")
 
+	firstSheet := true
 	for _, o := range outs {
 		sheet := safeSheetName(o.Query.SheetName)
 		idx, err := f.NewSheet(sheet)
 		if err != nil {
 			return err
 		}
-		_ = idx
 
 		r := 1
 		c := 1
 		// description
 		_ = f.SetCellValue(sheet, cell(c, r), o.Query.Description)
 		r++
-		_ = f.SetCellValue(sheet, cell(c, r), "finding title:")
-		_ = f.SetCellValue(sheet, cell(c+1, r), o.Query.FindingTitle)
-		r++
-		_ = f.SetCellValue(sheet, cell(c, r), "finding write-up:")
+		// For INFO queries we don't include a finding title.
+		if !strings.EqualFold(o.Query.Category, "INFO") && strings.TrimSpace(o.Query.FindingTitle) != "" {
+			_ = f.SetCellValue(sheet, cell(c, r), "finding title:")
+			_ = f.SetCellValue(sheet, cell(c+1, r), o.Query.FindingTitle)
+			r++
+		}
+		_ = f.SetCellValue(sheet, cell(c, r), "neo4j query:")
+		_ = f.SetCellValue(sheet, cell(c+1, r), o.Query.Cypher)
 		r += 2 // space
 
 		// headers
@@ -385,6 +392,12 @@ func writeXLSX(outs []queryOutput, path string) error {
 			_ = f.SetCellValue(sheet, cell(c+i, r), h)
 		}
 		r++
+
+		// Make the first sheet we create the active one.
+		if firstSheet {
+			f.SetActiveSheet(idx)
+			firstSheet = false
+		}
 
 		if o.Error != "" {
 			_ = f.SetCellValue(sheet, cell(c, r), "ERROR")
@@ -396,7 +409,7 @@ func writeXLSX(outs []queryOutput, path string) error {
 		for _, row := range o.Rows {
 			for i, h := range o.Query.Headers {
 				key := headerToKey(h)
-				_ = f.SetCellValue(sheet, cell(c+i, r), fmt.Sprintf("%v", row[key]))
+				_ = f.SetCellValue(sheet, cell(c+i, r), formatValue(key, row[key]))
 			}
 			r++
 		}
@@ -463,7 +476,7 @@ func writeCSV(w *os.File, outs []queryOutput) {
 		for _, r := range o.Rows {
 			rowOut := []string{o.Query.ID, o.Query.Title, o.Query.Category}
 			for _, k := range keys {
-				rowOut = append(rowOut, fmt.Sprintf("%v", r[k]))
+				rowOut = append(rowOut, formatValue(k, r[k]))
 			}
 			_ = cw.Write(rowOut)
 		}
@@ -478,7 +491,11 @@ func writeTextToWriter(w *os.File, outs []queryOutput) error {
 	bw := bufio.NewWriterSize(w, 1<<20)
 	defer bw.Flush()
 	for _, o := range outs {
-		fmt.Fprintf(bw, "%s\n%s\nfinding title: %s\n\n", o.Query.SheetName, o.Query.Description, o.Query.FindingTitle)
+		fmt.Fprintf(bw, "%s\n%s\n", o.Query.SheetName, o.Query.Description)
+		if !strings.EqualFold(o.Query.Category, "INFO") && strings.TrimSpace(o.Query.FindingTitle) != "" {
+			fmt.Fprintf(bw, "finding title: %s\n", o.Query.FindingTitle)
+		}
+		fmt.Fprintf(bw, "neo4j query: %s\n\n", oneLine(o.Query.Cypher))
 		if o.Error != "" {
 			fmt.Fprintf(bw, "ERROR: %s\n", o.Error)
 			fmt.Fprintf(bw, "%s\n", strings.Repeat("=", 100))
@@ -494,7 +511,7 @@ func writeTextToWriter(w *os.File, outs []queryOutput) error {
 			for _, k := range keys {
 				v := r[k]
 				if v != nil {
-					vals = append(vals, fmt.Sprintf("%v", v))
+					vals = append(vals, formatValue(k, v))
 				}
 			}
 			fmt.Fprintln(bw, strings.Join(vals, ","))
@@ -580,11 +597,49 @@ func headerToKey(h string) string {
 		return "type"
 	case "description":
 		return "description"
+	case "groupname", "group":
+		return "groupname"
+	case "samaccountname":
+		return "samaccountname"
+	case "fqdn":
+		return "fqdn"
 	default:
 		// try to make a reasonable key
 		h = strings.ReplaceAll(h, " ", "_")
 		return h
 	}
+}
+
+func oneLine(s string) string {
+	// keep the report readable
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.Join(strings.Fields(s), " ")
+	return s
+}
+
+func formatValue(key string, v any) string {
+	if v == nil {
+		return ""
+	}
+	lk := strings.ToLower(key)
+	// pwdlastset is typically epoch seconds in BloodHound ingests
+	if strings.Contains(lk, "pwdlastset") {
+		switch x := v.(type) {
+		case int64:
+			return time.Unix(x, 0).Format(time.RFC3339)
+		case int:
+			return time.Unix(int64(x), 0).Format(time.RFC3339)
+		case float64:
+			return time.Unix(int64(x), 0).Format(time.RFC3339)
+		case float32:
+			return time.Unix(int64(x), 0).Format(time.RFC3339)
+		case string:
+			// if already formatted or numeric-ish, just return
+			return x
+		}
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 func fatalf(format string, args ...any) {

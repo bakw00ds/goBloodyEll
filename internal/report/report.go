@@ -187,6 +187,12 @@ func WriteXLSX(outs []Output, path string, skipEmpty bool) error {
 		}
 		r++
 
+		// Track widths for a simple "auto-fit" (Excelize doesn't do real autofit).
+		colWidths := make([]int, len(o.Query.Headers))
+		for i, h := range o.Query.Headers {
+			colWidths[i] = displayWidth(h)
+		}
+
 		if o.Skipped {
 			_ = f.SetCellValue(sheet, cell(c, r), "SKIPPED")
 			_ = f.SetCellValue(sheet, cell(c+1, r), o.SkipWhy)
@@ -199,16 +205,29 @@ func WriteXLSX(outs []Output, path string, skipEmpty bool) error {
 		}
 
 		colIndex := o.Result.ColumnIndex()
+		rowCountForFit := 0
 		for _, row := range o.Result.Rows {
 			for i, key := range o.Query.ColumnKeys {
 				idx, ok := colIndex[key]
 				if !ok || idx >= len(row) {
 					continue
 				}
-				_ = f.SetCellValue(sheet, cell(c+i, r), fmtter.Value(key, row[idx]))
+				val := fmtter.Value(key, row[idx])
+				_ = f.SetCellValue(sheet, cell(c+i, r), val)
+				// update width estimate (cap work)
+				if rowCountForFit < 300 {
+					w := displayWidth(val)
+					if w > colWidths[i] {
+						colWidths[i] = w
+					}
+				}
 			}
 			r++
+			rowCountForFit++
 		}
+
+		// Apply widths (simple heuristic).
+		applyColumnWidths(f, sheet, colWidths)
 	}
 
 	// If everything was skipped/empty, keep default sheet and write a message.
@@ -235,6 +254,45 @@ func safeSheetName(s string) string {
 func cell(col, row int) string {
 	name, _ := excelize.ColumnNumberToName(col)
 	return fmt.Sprintf("%s%d", name, row)
+}
+
+func applyColumnWidths(f *excelize.File, sheet string, widths []int) {
+	// widths in approximate characters. Clamp to keep Excel readable.
+	for i, w := range widths {
+		if w <= 0 {
+			continue
+		}
+		if w < 10 {
+			w = 10
+		}
+		if w > 60 {
+			w = 60
+		}
+		colName, err := excelize.ColumnNumberToName(i + 1)
+		if err != nil {
+			continue
+		}
+		_ = f.SetColWidth(sheet, colName, colName, float64(w))
+	}
+}
+
+func displayWidth(s string) int {
+	// rough "Excel-like" width in monospace chars.
+	// count runes but cap extreme long strings.
+	if len(s) == 0 {
+		return 0
+	}
+	w := 0
+	for _, r := range s {
+		if r == '\n' || r == '\r' || r == '\t' {
+			continue
+		}
+		w++
+		if w > 200 {
+			break
+		}
+	}
+	return w
 }
 
 func writeCSV(w *os.File, outs []Output) error {

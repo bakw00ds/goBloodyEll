@@ -48,8 +48,11 @@ func main() {
 		includeInfo  bool
 		includeEntra bool
 
-		limit    int
-		timeoutS int
+		limit        int
+		timeoutS     int
+		queryTimeout int
+		parallel     int
+		retries      int
 	)
 
 	flag.Usage = func() {
@@ -77,8 +80,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  --format <json|csv|text>   structured output\n")
 		fmt.Fprintf(os.Stderr, "  --out <file>               structured output file\n\n")
 		fmt.Fprintf(os.Stderr, "MISC:\n")
-		fmt.Fprintf(os.Stderr, "  --limit <n>                safety cap (default 500)\n")
-		fmt.Fprintf(os.Stderr, "  --timeout <sec>            query timeout (default 30)\n\n")
+		fmt.Fprintf(os.Stderr, "  --limit <n>                safety cap (0 = unlimited)\n")
+		fmt.Fprintf(os.Stderr, "  --timeout <sec>            overall run timeout (default 60)\n")
+		fmt.Fprintf(os.Stderr, "  --query-timeout <sec>      per-query timeout (default 30)\n")
+		fmt.Fprintf(os.Stderr, "  --parallel <n>             parallel query workers (default 4)\n")
+		fmt.Fprintf(os.Stderr, "  --retries <n>              transient error retries (default 1)\n\n")
 		fmt.Fprintf(os.Stderr, "EXAMPLES:\n")
 		fmt.Fprintf(os.Stderr, "  goBloodyEll --list --category AD\n")
 		fmt.Fprintf(os.Stderr, "  NEO4J_PASS=neo4j goBloodyEll --neo4j-ip 10.0.0.5 -x report.xlsx --info\n")
@@ -111,7 +117,10 @@ func main() {
 	flag.BoolVar(&schema, "schema", false, "print Neo4j schema summary (labels/relationship types/properties)")
 	flag.BoolVar(&includeEntra, "entra", false, "include EntraID queries (best-effort, schema varies)")
 	flag.IntVar(&limit, "limit", 0, "max rows per query (0 = unlimited); if >0, also appends LIMIT if query lacks one")
-	flag.IntVar(&timeoutS, "timeout", 30, "query timeout seconds")
+	flag.IntVar(&timeoutS, "timeout", 60, "overall run timeout seconds")
+	flag.IntVar(&queryTimeout, "query-timeout", 30, "per-query timeout seconds")
+	flag.IntVar(&parallel, "parallel", 4, "number of queries to run in parallel")
+	flag.IntVar(&retries, "retries", 1, "retries for transient Neo4j errors")
 
 	// Programmatic output (if you want structured output)
 	flag.StringVar(&format, "format", "", "structured output format: json|csv|text (optional; default uses -t/-x/-v behavior)")
@@ -161,6 +170,13 @@ func main() {
 
 	fmt.Fprintf(os.Stderr, "[+] Connecting to %s (db=%s) as %s\n", neo4jURI, db, user)
 
+	if parallel < 1 {
+		parallel = 1
+	}
+	if retries < 0 {
+		retries = 0
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutS)*time.Second)
 	defer cancel()
 
@@ -170,34 +186,23 @@ func main() {
 	}
 	defer driver.Close(ctx)
 
-	sess := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: db})
-	defer sess.Close(ctx)
-
+	// schema uses a single session
 	if schema {
+		sess := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: db})
+		defer sess.Close(ctx)
 		if err := printSchema(ctx, sess); err != nil {
 			fatalf("schema error: %v", err)
 		}
 		return
 	}
 
-	outs := make([]queryOutput, 0, len(qs))
 	if limit > 0 {
-		fmt.Fprintf(os.Stderr, "[+] Running %d queries (limit=%d)\n", len(qs), limit)
+		fmt.Fprintf(os.Stderr, "[+] Running %d queries (limit=%d, parallel=%d, per-query-timeout=%ds)\n", len(qs), limit, parallel, queryTimeout)
 	} else {
-		fmt.Fprintf(os.Stderr, "[+] Running %d queries (no row limit)\n", len(qs))
+		fmt.Fprintf(os.Stderr, "[+] Running %d queries (no row limit, parallel=%d, per-query-timeout=%ds)\n", len(qs), parallel, queryTimeout)
 	}
-	for i, q := range qs {
-		fmt.Fprintf(os.Stderr, "[+] (%d/%d) %s [%s]\n", i+1, len(qs), q.SheetName, q.ID)
-		o := queryOutput{Query: q}
-		rows, err := runCypher(ctx, sess, q.Cypher, limit)
-		if err != nil {
-			o.Error = err.Error()
-		} else {
-			o.Rows = rows
-			o.Count = len(rows)
-		}
-		outs = append(outs, o)
-	}
+
+	outs := runQueriesParallel(ctx, driver, db, qs, limit, time.Duration(queryTimeout)*time.Second, parallel, retries)
 
 	// Structured output mode
 	if format != "" {

@@ -60,19 +60,19 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  --neo4j-ip <host>          (default 127.0.0.1)\n")
 		fmt.Fprintf(os.Stderr, "  --neo4j-uri <bolt://...>   overrides --neo4j-ip\n")
 		fmt.Fprintf(os.Stderr, "  --db <name>                (default neo4j)\n")
-		fmt.Fprintf(os.Stderr, "  -u, --username <user>      (default neo4j)\n")
-		fmt.Fprintf(os.Stderr, "  -p, --password <pass>      or env NEO4J_PASS\n\n")
+		fmt.Fprintf(os.Stderr, "  -u/--username <user>       (default neo4j)\n")
+		fmt.Fprintf(os.Stderr, "  -p/--password <pass>       or env NEO4J_PASS\n\n")
 		fmt.Fprintf(os.Stderr, "QUERY SELECTION:\n")
 		fmt.Fprintf(os.Stderr, "  --list                     list available queries\n")
 		fmt.Fprintf(os.Stderr, "  --schema                   print labels/rel-types/property samples\n")
 		fmt.Fprintf(os.Stderr, "  --id <query-id>            run a single query\n")
 		fmt.Fprintf(os.Stderr, "  --category <all|AD|INFO|EntraID> (default all)\n")
-		fmt.Fprintf(os.Stderr, "  --info                     include INFO queries\n")
+		fmt.Fprintf(os.Stderr, "  -i/--info                  include INFO queries\n")
 		fmt.Fprintf(os.Stderr, "  --entra                    include EntraID queries\n\n")
 		fmt.Fprintf(os.Stderr, "OUTPUT (choose any; default is console output):\n")
-		fmt.Fprintf(os.Stderr, "  -t, --text <file>          write a text report\n")
-		fmt.Fprintf(os.Stderr, "  -x, --xlsx <file>          write an XLSX report\n")
-		fmt.Fprintf(os.Stderr, "  -v, --verbose              print to console\n")
+		fmt.Fprintf(os.Stderr, "  -t/--text <file>           write a text report\n")
+		fmt.Fprintf(os.Stderr, "  -x/--xlsx <file>           write an XLSX report\n")
+		fmt.Fprintf(os.Stderr, "  -v/--verbose               print to console\n")
 		fmt.Fprintf(os.Stderr, "\nSTRUCTURED OUTPUT (optional alternative):\n")
 		fmt.Fprintf(os.Stderr, "  --format <json|csv|text>   structured output\n")
 		fmt.Fprintf(os.Stderr, "  --out <file>               structured output file\n\n")
@@ -602,7 +602,9 @@ func headerToKey(h string) string {
 		return "description"
 	case "group names", "group_names":
 		return "group"
-	case "groupname", "group":
+	case "group":
+		return "group"
+	case "groupname":
 		return "groupname"
 	case "password set", "password_set":
 		return "pwdlastset"

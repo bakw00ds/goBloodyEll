@@ -47,35 +47,20 @@ ORDER BY fqdn`,
 	},
 
 	// --- Ported from bloodyEll_example (findings) ---
+	// Removed: Non-DC unconstrained delegation query (use the all-computers version instead)
 	{
-		ID:           "ad-unconstrained-delegation-non-dc",
-		Title:        "Non-DCs w/ Unconstrained Delegation enabled",
-		Category:     "AD",
-		SheetName:    "Uncons. Delegation",
-		Headers:      []string{"Hostname", "Operating System"},
-		Description:  "Non-DCs w/ Unconstrained Delegation enabled",
-		FindingTitle: "Unconstrained Delegation present",
-		Cypher: `MATCH (c1:Computer)-[:MemberOf*1..]->(g:Group)
-WHERE g.objectid ENDS WITH '-516'
-WITH COLLECT(c1.name) AS domainControllers
-MATCH (c2:Computer {unconstraineddelegation:true})
-WHERE NOT c2.name IN domainControllers
-RETURN c2.name AS computer, c2.operatingsystem AS os
-ORDER BY computer ASC`,
-	},
-	{
-		ID:           "ad-unsupported-os-recent",
-		Title:        "Unsupported operating system(s) in use",
+		ID:           "ad-unsupported-os",
+		Title:        "Unsupported / legacy operating systems",
 		Category:     "AD",
 		SheetName:    "Unsupported OS",
 		Headers:      []string{"Hostname", "Operating System"},
-		Description:  "AD Computer objects identified as running unsupported operating systems (checked in last 90 days)",
+		Description:  "AD computer objects running legacy/unsupported OS versions (pwdlastset recency filter removed)",
 		FindingTitle: "Unsupported operating system(s) in use",
 		Cypher: `MATCH (c:Computer)
-WHERE c.operatingsystem =~ '.*(2000|2003|2008|xp|vista|7|me).*'
-  AND c.operatingsystem =~ '.*Windows.*'
-  AND c.pwdlastset > (datetime().epochseconds - (90 * 86400))
-RETURN c.name AS computer, c.operatingsystem AS os`,
+WHERE c.operatingsystem IS NULL
+   OR c.operatingsystem =~ '(?i).*windows.*(2000|2003|2008|xp|vista|7|me).*'
+RETURN c.name AS computer, c.operatingsystem AS os
+ORDER BY computer`,
 	},
 	{
 		ID:           "ad-domain-users-local-admin",
@@ -263,19 +248,7 @@ WHERE toLower(n.description) CONTAINS 'pw' OR toLower(n.description) CONTAINS 'p
 RETURN n.name AS user, n.description AS description
 ORDER BY user`,
 	},
-	{
-		ID:           "ad-computers-with-descriptions",
-		Title:        "Systems with descriptions",
-		Category:     "AD",
-		SheetName:    "System Descriptions",
-		Headers:      []string{"Hostname", "Operating System", "Description"},
-		Description:  "AD Computer objects with Descriptions to investigate",
-		FindingTitle: "Possible plaintext creds in computer descriptions",
-		Cypher: `MATCH (c:Computer)
-WHERE EXISTS(c.description)
-RETURN c.name AS computer, c.operatingsystem AS os, c.description AS description
-ORDER BY computer`,
-	},
+	// Removed duplicate "System Descriptions" (kept INFO version)
 
 	// --- Entra ID (best-effort) ---
 	{
@@ -335,7 +308,7 @@ ORDER BY principal`,
 		ID:           "ad-computers-unconstrained-delegation",
 		Title:        "Computers with unconstrained delegation",
 		Category:     "AD",
-		SheetName:    "Unconstrained Deleg (All)",
+		SheetName:    "Uncons. Delegation",
 		Headers:      []string{"Computer", "OS"},
 		Description:  "All computers with unconstrained delegation enabled.",
 		FindingTitle: "Unconstrained delegation enabled",

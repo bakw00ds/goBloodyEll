@@ -47,18 +47,34 @@ ORDER BY fqdn`,
 	},
 
 	// --- Ported from bloodyEll_example (findings) ---
-	// Removed: Non-DC unconstrained delegation query (use the all-computers version instead)
 	{
-		ID:           "ad-unsupported-os",
-		Title:        "Unsupported / legacy operating systems",
+		ID:           "ad-unconstrained-delegation-non-dc",
+		Title:        "Non-DCs w/ Unconstrained Delegation enabled",
 		Category:     "AD",
-		SheetName:    "Unsupported OS",
+		SheetName:    "Uncons. Delegation",
 		Headers:      []string{"Hostname", "Operating System"},
-		Description:  "AD computer objects running legacy/unsupported OS versions (pwdlastset recency filter removed)",
+		Description:  "Non-DCs w/ Unconstrained Delegation enabled",
+		FindingTitle: "Unconstrained Delegation present",
+		Cypher: `MATCH (c1:Computer)-[:MemberOf*1..]->(g:Group)
+WHERE g.objectid ENDS WITH '-516'
+WITH COLLECT(c1.name) AS domainControllers
+MATCH (c2:Computer {unconstraineddelegation:true})
+WHERE NOT c2.name IN domainControllers
+RETURN c2.name AS computer, c2.operatingsystem AS os
+ORDER BY computer ASC`,
+	},
+	{
+		ID:           "ad-unsupported-os-recent",
+		Title:        "Unsupported operating system(s) in use (recently active)",
+		Category:     "AD",
+		SheetName:    "Unsupported OS (recently active)",
+		Headers:      []string{"Hostname", "Operating System"},
+		Description:  "AD Computer objects identified as running unsupported operating systems (checked in last 90 days)",
 		FindingTitle: "Unsupported operating system(s) in use",
 		Cypher: `MATCH (c:Computer)
-WHERE c.operatingsystem IS NULL
-   OR c.operatingsystem =~ '(?i).*windows.*(2000|2003|2008|xp|vista|7|me).*'
+WHERE c.operatingsystem =~ '.*(2000|2003|2008|xp|vista|7|me).*'
+  AND c.operatingsystem =~ '.*Windows.*'
+  AND c.pwdlastset > (datetime().epochseconds - (90 * 86400))
 RETURN c.name AS computer, c.operatingsystem AS os
 ORDER BY computer`,
 	},
@@ -170,13 +186,26 @@ RETURN u.name AS user`,
 
 	// --- Additional defender cleanup / hygiene ---
 	{
-		ID:           "ad-domain-admins-members",
-		Title:        "Domain Admins members",
+		ID:           "ad-domain-controllers",
+		Title:        "Domain Controllers",
+		Category:     "AD",
+		SheetName:    "Domain Controllers",
+		Headers:      []string{"Hostname", "Operating System"},
+		Description:  "Computer objects that are members of the Domain Controllers group.",
+		FindingTitle: "",
+		Cypher: `MATCH (c:Computer)-[:MemberOf*1..]->(g:Group)
+WHERE g.objectid ENDS WITH '-516'
+RETURN c.name AS computer, c.operatingsystem AS os
+ORDER BY computer`,
+	},
+	{
+		ID:           "ad-domain-admins",
+		Title:        "Domain Admins",
 		Category:     "AD",
 		SheetName:    "Domain Admins",
 		Headers:      []string{"Principal", "Type"},
-		Description:  "List members of the Domain Admins group. Review for expected/approved membership.",
-		FindingTitle: "Excessive privileged group membership",
+		Description:  "Members of Domain Admins.",
+		FindingTitle: "",
 		Cypher: `MATCH (g:Group)
 WHERE toUpper(g.name) ENDS WITH "DOMAIN ADMINS" OR g.objectid ENDS WITH "-512"
 MATCH (u)-[:MemberOf*1..]->(g)

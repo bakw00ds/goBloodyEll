@@ -44,17 +44,18 @@ func main() {
 		includeInfo  bool
 		includeEntra bool
 
-		limit        int
-		timeoutS     int
-		queryTimeout int
-		parallel     int
-		retries      int
-		failFast     bool
-		skipEmpty    bool
-		showVersion  bool
-		userNameMode string
-		hostNameMode string
-		schemaSkip   bool
+		limit          int
+		timeoutS       int
+		queryTimeout   int
+		parallel       int
+		retries        int
+		failFast       bool
+		skipEmpty      bool
+		showVersion    bool
+		userNameMode   string
+		hostNameMode   string
+		schemaSkip     bool
+		exportCoreCSVs string
 	)
 
 	// build-time values
@@ -123,9 +124,10 @@ FLAGS (including aliases):
 
 	flag.StringVar(&neo4jHost, "neo4j-ip", "127.0.0.1", "Neo4j server IP/host (used if --neo4j-uri not set)")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
-	flag.StringVar(&userNameMode, "usernames", "sam", "username display mode: sam|upn")
+	flag.StringVar(&userNameMode, "usernames", "upn", "username display mode: sam|upn")
 	flag.StringVar(&hostNameMode, "hostnames", "fqdn", "hostname display mode: hostname|fqdn|both")
 	flag.BoolVar(&schemaSkip, "schema-skip", true, "skip queries when required labels/relationships are missing")
+	flag.StringVar(&exportCoreCSVs, "export-core-csvs", "", "write core exports (users, computers, domain admins, domain controllers) as separate CSVs into this directory")
 	flag.StringVar(&neo4jURI, "neo4j-uri", "", "Neo4j URI (e.g. bolt://10.0.0.5:7687). Overrides --neo4j-ip")
 	flag.StringVar(&db, "db", "neo4j", "Neo4j database name")
 	flag.StringVar(&id, "id", "", "run a single query by id")
@@ -293,6 +295,13 @@ FLAGS (including aliases):
 			fatalf("write xlsx failed: %v", err)
 		}
 		fmt.Fprintf(os.Stderr, "[+] Wrote XLSX report -> %s\n", outXLSX)
+	}
+	if strings.TrimSpace(exportCoreCSVs) != "" {
+		fmt.Fprintf(os.Stderr, "[+] Writing core CSV exports -> %s\n", exportCoreCSVs)
+		if err := report.WriteCoreCSVs(exportCoreCSVs, outs); err != nil {
+			fatalf("write core CSVs failed: %v", err)
+		}
+		fmt.Fprintf(os.Stderr, "[+] Wrote core CSV exports -> %s\n", exportCoreCSVs)
 	}
 	if verbose {
 		report.WriteConsole(outs)

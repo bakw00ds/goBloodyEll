@@ -1,0 +1,363 @@
+#!/usr/bin/env python
+
+import argparse, xlsxwriter
+from neo4j import GraphDatabase
+
+class Neo4JConnect(object):
+
+    def __init__(self, uri, user, password):
+        self._driver = GraphDatabase.driver(uri, auth=(user, password), encrypted=False)
+
+    def close(self):
+        self._driver.close()
+
+    def query(self, query, args=""):
+        with self._driver.session() as session:
+            return session.run(query, args)
+
+
+#File creating/writing and output helper functions
+def writexlsx(dbconnect, filename):
+    print("writing xlsx...")
+    workbook  = xlsxwriter.Workbook(filename)
+    for item in Queries:
+
+        sheet = workbook.add_worksheet(item["sheetname"])
+        output = dbconnect.query(item["query"])
+        row_counter = 0
+        col_counter = 0
+
+        #write description
+        sheet.write(row_counter, col_counter, str(item["description"]))
+        row_counter +=1
+
+        #write finding report title to output file
+        sheet.write(row_counter, col_counter, "finding title:")
+        row_counter +=1
+        #write finding report writeup to output file
+        sheet.write(row_counter, col_counter, "finding write-up:")
+        #tmp increase col_counter to write the title and URL into another column
+        #row_counter is also decremented one to get the previous column, and then 3 is added to get back on track (With one extra row as a space)
+        col_counter +=1
+        else:
+        row_counter -=1
+        sheet.write(row_counter, col_counter, str(item["finding_title"]))
+        row_counter +=3
+        # decrease col_counter back to original number
+        col_counter -=1
+
+        #add headers
+        for header in item["headers"]:
+            sheet.write(row_counter,col_counter, str(header))
+            col_counter +=1
+
+        row_counter +=1
+        col_counter = 0
+
+        #write results
+        for record in output.records():
+            for value in record.values():
+                if value:
+                    sheet.write(row_counter,col_counter, str(value))
+                    col_counter +=1
+            row_counter +=1
+            col_counter = 0
+
+    workbook.close()
+
+def writetxt(dbconnect, filename):
+    print("writing txt...")
+    with open(filename, "w+") as f:
+        for item in Queries:
+            f.write(item["sheetname"] + '\n')
+            f.write(item["description"] + '\n')
+            f.write('finding title: ' + item["finding_title"] + '\n')
+            f.write("\n")
+            output = dbconnect.query(item["query"])
+            for record in output.records():
+                for value in record.values():
+                    if value:
+                        f.write(str(value) + ",")
+                f.write('\n')
+            f.write("="*100  + '\n')
+
+def writeoutput(dbconnect):
+    for item in Queries:
+        print(item["sheetname"])
+        print(item["description"])
+        print("finding title: " + item["finding_title"])
+        print("\n")
+        output = dbconnect.query(item["query"])
+        for record in output.records():
+            for value in record.values():
+                if value:
+                    print(str(value) + ", ", end="")
+            print("")
+        print("="*100)
+
+Queries = [
+
+    {
+        "query": "MATCH (c1:Computer)-[:MemberOf*1..]->(g:Group) WHERE g.objectid ENDS WITH '-516' WITH COLLECT(c1.name) AS domainControllers MATCH (c2:Computer {unconstraineddelegation:true}) WHERE NOT c2.name IN domainControllers RETURN c2.name,c2.operatingsystem ORDER BY c2.name ASC",
+        "sheetname": "Uncons. Delegation",
+        "headers": ["Hostname", "Operating System"],
+        "description": "Non-DCs w/ Unconstrained Delegation enabled",
+        "finding_title": "Unconstrained Delegation present",
+    },
+    {
+        "query": "MATCH (c:Computer) WHERE c.operatingsystem =~ '.*(2000|2003|2008|xp|vista|7|me).*' AND c.operatingsystem =~ '.*Windows.*' AND c.pwdlastset > (datetime().epochseconds - (90 * 86400)) RETURN c.name, c.operatingsystem",
+        "sheetname": "Unsupported OS",
+        "headers": ["Hostname", "Operating System"],
+        "description": "AD Computer objects identified as running unsupported operating systems (checked in last 90 days)",
+        "finding_title": "Unsupported operating system(s) in use",
+    },
+    {
+        "query": "MATCH (m:Group) WHERE m.name =~ 'DOMAIN USERS@.*' MATCH p=(m)-[r:AdminTo]->(n:Computer) RETURN n.name",
+        "sheetname": "All Users LA",
+        "headers": ["Hostname"],
+        "description": "Systems where the Domain Users group is in the local Administrators group",
+        "finding_title": "Standard domain accounts are members of local Administrators group",
+    },
+    {
+        "query": "MATCH (u:User)-[r:MemberOf*1..]->(g:Group) WHERE g.highvalue=true AND u.hasspn=true RETURN distinct(u.name)",
+        "sheetname": "High Value Kerberoast",
+        "headers": ["User"],
+        "description": "High value users with SPNs that could allow kerberoasting",
+        "finding_title": "Accounts Susceptible to Kerberoasting",
+    },
+    {
+        "query": "MATCH (u:User) WHERE u.pwdlastset < (datetime().epochseconds - (730 * 86400)) AND NOT u.pwdlastset IN [-1.0, 0.0] AND u.enabled=true RETURN u.name, u.pwdlastset, u.hasspn order by u.hasspn DESC, u.pwdlastset",
+        "sheetname": "Old Passwords",
+        "headers": ["User", "Password Set", "Service Acct?"],
+        "description": "Enabled accounts with passwords older than two years. Service accounts first.",
+        "finding_title": "Old Active Directory password(s)",
+    },
+    {
+        "query": "MATCH (c1:Computer)-[:MemberOf*1..]->(g:Group) WHERE g.objectid ENDS WITH '-516' WITH COLLECT(c1.name) AS domainControllers MATCH (n:User)-[:MemberOf]->(g2:Group) WHERE g2.objectid ENDS WITH '-512' MATCH p = (c:Computer)-[:HasSession]->(n) WHERE NOT c.name IN domainControllers return n.name, c.name",
+        "sheetname": "DAs on Non-DCs",
+        "headers": ["User", "Computer"],
+        "description": "Domain admin sessions on systems that are not domain controllers.",
+        "finding_title": "Domain Administrator logged onto non-Domain Controller",
+    },
+    {
+        "query": "MATCH (u:User) WHERE u.userpassword IS NOT NULL RETURN u.name,u.userpassword",
+        "sheetname": "Users with userpassword",
+        "headers": ["username", "userpassword"],
+        "description": "AD users in the domain with the userpassword attribute set",
+        "finding_title": "Plaintext credentials stored in the userpassword Active Directory attribute",
+    },
+     {
+        "query": "MATCH (u:User {dontreqpreauth: true}) RETURN u.name",
+        "sheetname": "ASREP Roastable Users",
+        "headers": ["username", "userpassword"],
+        "description": "AD users with dontpreauth set to true",
+        "finding_title": "Kerberos preauthentication not required by domain account(s)",
+    },
+    {
+        "query": "MATCH (u:User)-[a:AllExtendedRights|GenericAll|Owns|GenericWrite|WriteOwner|WriteDacl]->(g:GPO) RETURN u.name, g.name, type(a)",
+        "sheetname": "GPO Weirdness",
+        "headers": ["User", "GPO", "ACL"],
+        "description": "AD users with strange GPO privileges",
+        "finding_title": "[VARIABLE]",
+    },
+    {
+        "query": "MATCH (u:User) WHERE u.passwordnotreqd AND u.enabled RETURN u.name",
+        "sheetname": "Pass Not Reqd",
+        "headers": ["User"],
+        "description": "AD users with strange GPO privileges",
+        "finding_title": "Password not required for domain accounts",
+    },
+
+]
+
+
+info_queries = [
+
+    {
+        "query": "MATCH (m:Group)-[:AdminTo]->(n:Computer) RETURN distinct(m.name) ORDER BY m.name",
+        "sheetname": "Groups with admin privs",
+        "headers": ["Group Names"],
+        "description": "[INFO] Groups with admin rights to AD computers [INFO]",
+        "finding_title": "[VARIABLE]",
+    },
+
+
+    {
+        "query": "Match (u:User)-[:MemberOf]->(g:Group) WHERE g.name =~ '.*VPN.*' RETURN u.name,g.name",
+        "sheetname": "Users in VPN group",
+        "headers": ["username", "groupname"],
+        "description": "[INFO] AD users that are in a group that contains the string VPN [INFO]",
+        "finding_title": "[VARIABLE]",
+    },
+
+     {
+        "query": "MATCH (m:Group)-[:ForceChangePassword]->(n:User) RETURN m.name, count(n)",
+        "sheetname": "Groups with forceChangePassword",
+        "headers": ["username", "userpassword"],
+        "description": "[INFO] Groups with the ForceChangePassword privilege in the domain [INFO]",
+        "finding_title": "[VARIABLE]",
+    },
+
+
+    {
+        "query": " MATCH (u:User) WHERE u.allowedtodelegate IS NOT NULL RETURN u.name,u.allowedtodelegate",
+        "sheetname": "const. deleg computers",
+        "headers": ["username", "services"],
+        "description": "[INFO] AD users that have constrained delegation turned on and to which services [INFO]",
+        "finding_title": "Constrained Delegation present",
+    },
+
+
+    {
+        "query": "MATCH (c:Computer) WHERE c.operatingsystem =~ '.*Linux.*' OR c.operatingsystem =~ '.*(Debian|Ubuntu|Fedora|BSD).*' RETURN c.name, c.operatingsystem",
+        "sheetname": "Linux OS",
+        "headers": ["Hostname", "Operating System"],
+        "description": "[INFO] AD Linux based computer objects [INFO]",
+        "finding_title": "[VARIABLE]",
+    },
+
+    {
+        "query": "MATCH (c:Computer) WHERE c.operatingsystem =~ '.*Linux.*' OR c.operatingsystem =~ '.*(Debian|Ubuntu|Fedora|BSD).*' AND c.pwdlastset < (datetime().epochseconds - (1825 * 86400)) RETURN c.name, c.operatingsystem",
+        "sheetname": "Old password Linux OS",
+        "headers": ["Hostname", "Operating System", "PasswordLastSet"],
+        "description": "[INFO] AD Linux based computer objects with potentially old passwords [INFO]",
+        "finding_title": "Old Active Directory password(s)",
+    },
+
+     {
+        "query": "MATCH (c:Computer) WHERE EXISTS(c.description) return c.name, c.operatingsystem, c.description",
+        "sheetname": "Systems with Descriptions",
+        "headers": ["Hostname", "Operating System", "Description"],
+        "description": "[INFO] AD Computer objects with Descriptions to investigate",
+        "finding_title": "Plaintext credentials stored in the description Active Directory attribute",
+    },
+
+    {
+        "query": "MATCH (c:Computer) WHERE toLower(c.name) CONTAINS 'file' OR toLower(c.description) CONTAINS 'file' OR toLower(c.name) CONTAINS 'share' OR toLower(c.description) CONTAINS 'share' RETURN c.name, c.operatingsystem, c.description",
+        "sheetname": "File Share Servers",
+        "headers": ["Hostname", "Operating System", "Description"],
+        "description": "[INFO] Potential File Share Servers to access and find sensitive data (ie: PII or Creds)",
+        "finding_title": "Sensitive information stored in weakly-secured network shares",
+    },
+
+    {
+        "query": "MATCH (c:Computer) WHERE toLower(c.name) CONTAINS 'sql' OR toLower(c.description) CONTAINS 'sql' RETURN c.name, c.operatingsystem, c.description",
+        "sheetname": "SQL Systems",
+        "headers": ["Hostname", "Operating System", "Description"],
+        "description": "[INFO] SQL Servers to check out",
+        "finding_title": "[VARIABLE]",
+    },
+
+    {
+        "query": "MATCH (c:Computer) WHERE toLower(c.name) CONTAINS 'ftp' OR toLower(c.description) CONTAINS 'ftp' RETURN c.name, c.operatingsystem, c.description",
+        "sheetname": "FTP Servers",
+        "headers": ["Hostname", "Operating System", "Description"],
+        "description": "[INFO] FTP Servers",
+        "finding_title": "[VARIABLE]",
+    },
+
+    {
+        "query": "MATCH (c:Computer) WHERE toLower(c.name) CONTAINS 'print' OR toLower(c.description) CONTAINS 'print' RETURN c.name, c.operatingsystem, c.description",
+        "sheetname": "Printers",
+        "headers": ["Hostname", "Operating System", "Description"],
+        "description": "[INFO] Printers on the AD Network",
+        "finding_title": "[VARIABLE]",
+    },
+
+    {
+        "query": "MATCH (c:Computer) WHERE toLower(c.name) CONTAINS 'web' OR toLower(c.description) CONTAINS 'web' OR toLower(c.name) CONTAINS 'appli' OR toLower(c.description) CONTAINS 'appli' RETURN c.name, c.operatingsystem, c.description",
+        "sheetname": "Web Applications",
+        "headers": ["Hostname", "Operating System", "Description"],
+        "description": "[INFO] Web Application Servers to potentially exploit (check with Dev/Staging tab also)[INFO]",
+        "finding_title": "[VARIABLE]",
+    },
+
+    {
+        "query": "MATCH (c:Computer) WHERE toLower(c.name) CONTAINS 'dev' OR toLower(c.description) CONTAINS 'dev' OR toLower(c.name) CONTAINS 'stage' OR toLower(c.description) CONTAINS 'stage' RETURN c.name, c.operatingsystem, c.description",
+        "sheetname": "Dev or Staging Systems",
+        "headers": ["Hostname", "Operating System", "Description"],
+        "description": "[INFO] Dev or Staging Systems to potentially exploit",
+        "finding_title": "[VARIABLE]",
+    },
+
+    {
+        "query": "MATCH (c:Computer) WHERE toLower(c.name) CONTAINS 'citrix' OR toLower(c.name) CONTAINS 'ctx' OR toLower(c.description) CONTAINS 'citrix' RETURN c.name, c.operatingsystem, c.description",
+        "sheetname": "Citrix Systems",
+        "headers": ["Hostname", "Operating System", "Description"],
+        "description": "[INFO] Citrix Systems to check for a quick foothold elsewhere",
+        "finding_title": "[VARIABLE]",
+    },
+
+    {
+        "query": "MATCH (c:Computer) WHERE toLower(c.name) CONTAINS 'manage' OR toLower(c.description) CONTAINS 'manage' RETURN c.name, c.operatingsystem, c.description",
+        "sheetname": "Management Systems",
+        "headers": ["Hostname", "Operating System", "Description"],
+        "description": "[INFO] Management Systems of interest",
+        "finding_title": "[VARIABLE]",
+    },
+
+    {
+        "query": "MATCH (c:Computer) WHERE toLower(c.name) CONTAINS 'sccm' OR toLower(c.description) CONTAINS 'sccm' RETURN c.name, c.operatingsystem, c.description",
+        "sheetname": "SCCM Servers",
+        "headers": ["Hostname", "Operating System", "Description"],
+        "description": "[INFO] SCCM Servers",
+        "finding_title": "[VARIABLE]",
+    },
+
+    {
+        "query": "MATCH (n:User) WHERE toLower(n.description) CONTAINS 'pw' OR toLower(n.description) CONTAINS 'pass' RETURN n.name, n.description",
+        "sheetname": "\"pw\" or \"pass\" in User desc.",
+        "headers": ["Hostname", "Description"],
+        "description": "[INFO] User Accounts with 'pw' or 'pass' in description",
+        "finding_title": "Plaintext credentials stored in the description Active Directory attribute",
+    },
+
+
+]
+
+
+#Define command line args
+parser = argparse.ArgumentParser()
+parser.add_argument("-u", "--username", help="Bloodhound Username (default neo4j)")
+parser.add_argument("-p", "--password", help="Bloodhound Password (default neo4j)")
+parser.add_argument("-t", "--text", help="Name of text file for output")
+parser.add_argument("-x", "--xlsx", help="Name of XLSX file for output")
+parser.add_argument("-i", "--info", action='store_true', help="Run informational queries as well")
+parser.add_argument("-v", "--verbose", help="Print verbose output to console (true/false)") #add this option
+
+#Read arguments from the command line
+args = parser.parse_args()
+
+
+#validate args
+if not args.username:
+    args.username = "neo4j"
+    print("No username supplied... trying default (neo4j)")
+
+if not args.password:
+    args.password = "neo4j" #change this later
+    print ("No password supplied... trying default (neo4j)")
+
+if args.info:
+    Queries = Queries + info_queries
+
+#default to console output if nothing is specified
+if not args.text or args.xlsx or args.verbose:
+    args.verbose = True
+
+#Core tool logic
+try:
+    dbconnect = Neo4JConnect("bolt://127.0.0.1:7687", args.username, args.password)
+
+    if args.text:
+        writetxt(dbconnect, args.text)
+
+    if args.xlsx:
+        writexlsx(dbconnect, args.xlsx)
+
+    if args.verbose:
+        writeoutput(dbconnect)
+
+except:
+    print("Error: something went wrong...")
+    raise

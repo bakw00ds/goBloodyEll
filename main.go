@@ -365,7 +365,9 @@ func writeTextFile(outs []queryOutput, path string) error {
 
 func writeXLSX(outs []queryOutput, path string) error {
 	f := excelize.NewFile()
-	// excelize.NewFile() starts with Sheet1; we delete it after creating our first real sheet.
+	// Capture whatever excelize created by default (usually Sheet1) and remove it after
+	// we've created at least one real sheet (Excel requires at least one worksheet).
+	defaultSheet := f.GetSheetName(0)
 	firstSheet := true
 	for _, o := range outs {
 		sheet := safeSheetName(o.Query.SheetName)
@@ -395,10 +397,21 @@ func writeXLSX(outs []queryOutput, path string) error {
 		}
 		r++
 
-		// Make the first sheet we create the active one, and remove the default Sheet1.
+		// Make the first sheet we create the active one, and remove the default sheet(s).
 		if firstSheet {
 			f.SetActiveSheet(idx)
-			_ = f.DeleteSheet("Sheet1")
+			// Try hard to delete the default sheet (usually "Sheet1").
+			candidates := []string{"Sheet1", defaultSheet}
+			for _, name := range candidates {
+				name = strings.TrimSpace(name)
+				if name == "" {
+					continue
+				}
+				if name == sheet {
+					continue
+				}
+				_ = f.DeleteSheet(name)
+			}
 			firstSheet = false
 		}
 

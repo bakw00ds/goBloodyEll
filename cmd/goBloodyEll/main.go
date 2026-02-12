@@ -48,38 +48,47 @@ func main() {
 	)
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "goBloodyEll - BloodHound/Neo4j defensive query runner (AD + EntraID)\n\n")
-		fmt.Fprintf(os.Stderr, "USAGE:\n")
-		fmt.Fprintf(os.Stderr, "  goBloodyEll [connection] [query selection] [output]\n\n")
-		fmt.Fprintf(os.Stderr, "CONNECTION:\n")
-		fmt.Fprintf(os.Stderr, "  --neo4j-ip <host>          (default 127.0.0.1)\n")
-		fmt.Fprintf(os.Stderr, "  --neo4j-uri <bolt://...>   overrides --neo4j-ip\n")
-		fmt.Fprintf(os.Stderr, "  --db <name>                (default neo4j)\n")
-		fmt.Fprintf(os.Stderr, "  -u/--username <user>       (default neo4j)\n")
-		fmt.Fprintf(os.Stderr, "  -p/--password <pass>       or env NEO4J_PASS\n\n")
-		fmt.Fprintf(os.Stderr, "QUERY SELECTION:\n")
-		fmt.Fprintf(os.Stderr, "  --list                     list available queries\n")
-		fmt.Fprintf(os.Stderr, "  --schema                   print labels/rel-types\n")
-		fmt.Fprintf(os.Stderr, "  --id <query-id>            run a single query\n")
-		fmt.Fprintf(os.Stderr, "  --category <all|AD|INFO|EntraID> (default all)\n")
-		fmt.Fprintf(os.Stderr, "  -i/--info                  include INFO queries\n")
-		fmt.Fprintf(os.Stderr, "  --entra                    include EntraID queries\n\n")
-		fmt.Fprintf(os.Stderr, "OUTPUT (choose any; default is console output):\n")
-		fmt.Fprintf(os.Stderr, "  -t/--text <file>           write a text report\n")
-		fmt.Fprintf(os.Stderr, "  -x/--xlsx <file>           write an XLSX report\n")
-		fmt.Fprintf(os.Stderr, "  -v/--verbose               print to console\n\n")
-		fmt.Fprintf(os.Stderr, "STRUCTURED OUTPUT (alternative):\n")
-		fmt.Fprintf(os.Stderr, "  --format <json|csv|text>   structured output\n")
-		fmt.Fprintf(os.Stderr, "  --out <file>               structured output file\n\n")
-		fmt.Fprintf(os.Stderr, "PERFORMANCE/ROBUSTNESS:\n")
-		fmt.Fprintf(os.Stderr, "  --limit <n>                rows per query (0 = unlimited)\n")
-		fmt.Fprintf(os.Stderr, "  --timeout <sec>            overall run timeout (default 60)\n")
-		fmt.Fprintf(os.Stderr, "  --query-timeout <sec>      per-query timeout (default 30)\n")
-		fmt.Fprintf(os.Stderr, "  --parallel <n>             parallel query workers (default 4)\n")
-		fmt.Fprintf(os.Stderr, "  --retries <n>              transient error retries (default 1)\n")
-		fmt.Fprintf(os.Stderr, "  --fail-fast                stop on first query error\n")
-		fmt.Fprintf(os.Stderr, "  --skip-empty               do not create empty/failed sheets\n\n")
-		fmt.Fprintf(os.Stderr, "FLAGS (including aliases):\n")
+		const help = `goBloodyEll - BloodHound/Neo4j defensive query runner (AD + EntraID)
+
+USAGE:
+  goBloodyEll [connection] [query selection] [output]
+
+CONNECTION:
+  --neo4j-ip <host>          (default 127.0.0.1)
+  --neo4j-uri <bolt://...>   overrides --neo4j-ip
+  --db <name>                (default neo4j)
+  -u/--username <user>       (default neo4j)
+  -p/--password <pass>       or env NEO4J_PASS
+
+QUERY SELECTION:
+  --list                     list available queries
+  --schema                   print labels/rel-types
+  --id <query-id>            run a single query
+  --category <all|AD|INFO|EntraID> (default all)
+  -i/--info                  include INFO queries
+  --entra                    include EntraID queries
+
+OUTPUT (choose any; default is console output):
+  -t/--text <file>           write a text report
+  -x/--xlsx <file>           write an XLSX report
+  -v/--verbose               print to console
+
+STRUCTURED OUTPUT (alternative):
+  --format <json|csv|text>   structured output
+  --out <file>               structured output file
+
+PERFORMANCE/ROBUSTNESS:
+  --limit <n>                rows per query (0 = unlimited)
+  --timeout <sec>            overall run timeout (default 60)
+  --query-timeout <sec>      per-query timeout (default 30)
+  --parallel <n>             parallel query workers (default 4)
+  --retries <n>              transient error retries (default 1)
+  --fail-fast                stop on first query error
+  --skip-empty               do not create empty/failed sheets
+
+FLAGS (including aliases):
+`
+		fmt.Fprint(os.Stderr, help)
 		flag.PrintDefaults()
 	}
 

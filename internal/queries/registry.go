@@ -118,6 +118,92 @@ WHERE u.pwdlastset < (datetime().epochseconds - (730 * 86400))
 RETURN u.name AS user, u.pwdlastset AS pwdlastset, u.hasspn AS service_acct
 ORDER BY service_acct DESC, pwdlastset DESC`,
 	}.WithResolvedKeys(),
+
+	// --- EntraID (best-effort, depends on ingestion schema) ---
+	Query{
+		ID:           "entra-guest-users",
+		Title:        "Entra ID guest users",
+		Category:     "EntraID",
+		SheetName:    "Entra Guests",
+		Headers:      []string{"Guest"},
+		Description:  "List guest users (external identities) for review.",
+		FindingTitle: "Review guest/external identities",
+		Cypher: `MATCH (u:AzureUser)
+WHERE toLower(u.usertype) = "guest" OR toLower(u.userType) = "guest"
+RETURN u.name AS guest
+ORDER BY guest`,
+	}.WithResolvedKeys(),
+	Query{
+		ID:           "entra-privileged-roles",
+		Title:        "Entra ID privileged role assignments",
+		Category:     "EntraID",
+		SheetName:    "Entra Roles",
+		Headers:      []string{"Role", "Sample Members"},
+		Description:  "Privileged/admin role assignments (best-effort).",
+		FindingTitle: "Privileged role assignments",
+		Cypher: `MATCH (r:AzureRole)
+WHERE toLower(r.name) CONTAINS "admin" OR toLower(r.name) CONTAINS "privileged"
+OPTIONAL MATCH (p)-[:AZRoleMember]->(r)
+RETURN r.name AS role, collect(distinct p.name)[0..50] AS sample_members
+ORDER BY role`,
+	}.WithResolvedKeys(),
+	Query{
+		ID:           "entra-service-principals",
+		Title:        "Entra ID service principals",
+		Category:     "EntraID",
+		SheetName:    "Service Principals",
+		Headers:      []string{"Service Principal"},
+		Description:  "Surface application identities for review.",
+		FindingTitle: "Review application identities",
+		Cypher: `MATCH (sp:ServicePrincipal)
+RETURN sp.name AS service_principal
+ORDER BY service_principal
+LIMIT 500`,
+	}.WithResolvedKeys(),
+	Query{
+		ID:           "entra-admin-role-membership",
+		Title:        "Entra admin roles and members (top 50 per role)",
+		Category:     "EntraID",
+		SheetName:    "Entra Admin Roles",
+		Headers:      []string{"Role", "Members"},
+		Description:  "Role membership for roles containing 'admin'. Collector schema varies.",
+		FindingTitle: "Review Entra privileged role membership",
+		Cypher: `MATCH (r:AzureRole)
+WHERE toLower(r.name) CONTAINS "admin"
+OPTIONAL MATCH (p)-[:AZRoleMember]->(r)
+RETURN r.name AS role, collect(distinct p.name)[0..50] AS members
+ORDER BY role`,
+	}.WithResolvedKeys(),
+	Query{
+		ID:           "entra-oauth-grants",
+		Title:        "OAuth permission grants (consents)",
+		Category:     "EntraID",
+		SheetName:    "OAuth Grants",
+		Headers:      []string{"Client", "Resource", "Scope"},
+		Description:  "Consent grants can create long-lived access paths. Best-effort; labels/edges differ by tool.",
+		FindingTitle: "Review OAuth consent grants",
+		Cypher: `MATCH (g:OAuth2PermissionGrant)
+OPTIONAL MATCH (c)-[:Client]->(g)
+OPTIONAL MATCH (r)-[:Resource]->(g)
+RETURN coalesce(c.name, c.appid, c.objectid) AS client,
+       coalesce(r.name, r.appid, r.objectid) AS resource,
+       g.scope AS scope
+ORDER BY client
+LIMIT 2000`,
+	}.WithResolvedKeys(),
+	Query{
+		ID:           "entra-app-role-assignments",
+		Title:        "App role assignments",
+		Category:     "EntraID",
+		SheetName:    "AppRole Assign",
+		Headers:      []string{"Principal", "ServicePrincipal", "Role"},
+		Description:  "App role assignments can grant app-specific privileges. Best-effort schema.",
+		FindingTitle: "Review app role assignments",
+		Cypher: `MATCH (u)-[r:AppRoleAssignment]->(sp:ServicePrincipal)
+RETURN u.name AS principal, sp.name AS service_principal, r.appRoleId AS role
+ORDER BY principal
+LIMIT 2000`,
+	}.WithResolvedKeys(),
 }
 
 var InfoQueries = []Query{

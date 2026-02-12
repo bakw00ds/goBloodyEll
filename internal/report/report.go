@@ -147,26 +147,34 @@ func WriteXLSX(outs []Output, path string, skipEmpty bool) error {
 	fmtter := format.New()
 	f := excelize.NewFile()
 	defaultSheet := f.GetSheetName(0)
-	firstSheet := true
+
+	// Summary tab is always first.
+	summarySheet := "Summary"
+	summaryIdx, err := f.NewSheet(summarySheet)
+	if err != nil {
+		return err
+	}
+	f.SetActiveSheet(summaryIdx)
+	// delete default sheet now that we have a real one
+	for _, name := range []string{"Sheet1", defaultSheet} {
+		name = strings.TrimSpace(name)
+		if name != "" && name != summarySheet {
+			_ = f.DeleteSheet(name)
+		}
+	}
+	// summary tab created
+	if err := writeSummarySheet(f, summarySheet, outs); err != nil {
+		return err
+	}
 
 	for _, o := range outs {
 		if skipEmpty && (o.Skipped || o.Error != "" || len(o.Result.Rows) == 0) {
 			continue
 		}
 		sheet := safeSheetName(o.Query.SheetName)
-		idx, err := f.NewSheet(sheet)
+		_, err := f.NewSheet(sheet)
 		if err != nil {
 			return err
-		}
-		if firstSheet {
-			f.SetActiveSheet(idx)
-			for _, name := range []string{"Sheet1", defaultSheet} {
-				name = strings.TrimSpace(name)
-				if name != "" && name != sheet {
-					_ = f.DeleteSheet(name)
-				}
-			}
-			firstSheet = false
 		}
 
 		r := 1
@@ -228,11 +236,6 @@ func WriteXLSX(outs []Output, path string, skipEmpty bool) error {
 
 		// Apply widths (simple heuristic).
 		applyColumnWidths(f, sheet, colWidths)
-	}
-
-	// If everything was skipped/empty, keep default sheet and write a message.
-	if firstSheet {
-		_ = f.SetCellValue(defaultSheet, "A1", "No sheets were produced (all empty/skipped/error).")
 	}
 
 	return f.SaveAs(path)

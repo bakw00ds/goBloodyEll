@@ -22,7 +22,7 @@ func (f *Formatter) Value(columnKey string, v any) string {
 		return ""
 	}
 	lk := strings.ToLower(columnKey)
-	if strings.Contains(lk, "pwdlastset") {
+	if strings.Contains(lk, "pwdlastset") || strings.Contains(lk, "lastlogon") || strings.Contains(lk, "lastlogontimestamp") {
 		switch x := v.(type) {
 		case int64:
 			return time.Unix(x, 0).Format(time.RFC3339)

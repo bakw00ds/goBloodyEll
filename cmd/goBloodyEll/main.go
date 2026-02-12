@@ -16,6 +16,12 @@ import (
 	"github.com/bakw00ds/goBloodyEll/internal/schema"
 )
 
+var (
+	version = "dev"
+	commit  = ""
+	date    = ""
+)
+
 func main() {
 	var (
 		neo4jHost string
@@ -45,10 +51,20 @@ func main() {
 		retries      int
 		failFast     bool
 		skipEmpty    bool
+		showVersion  bool
+		userNameMode string
+		hostNameMode string
+		schemaSkip   bool
 	)
+
+	// build-time values
+	// set via -ldflags "-X main.version=v1.2.3 -X main.commit=... -X main.date=..."
 
 	flag.Usage = func() {
 		const help = `goBloodyEll - BloodHound/Neo4j defensive query runner (AD + EntraID)
+
+INSTALL:
+  go install github.com/bakw00ds/goBloodyEll/cmd/goBloodyEll@latest
 
 USAGE:
   goBloodyEll [connection] [query selection] [output]
@@ -106,6 +122,10 @@ FLAGS (including aliases):
 	flag.BoolVar(&verbose, "verbose", false, "print results to console")
 
 	flag.StringVar(&neo4jHost, "neo4j-ip", "127.0.0.1", "Neo4j server IP/host (used if --neo4j-uri not set)")
+	flag.BoolVar(&showVersion, "version", false, "print version and exit")
+	flag.StringVar(&userNameMode, "usernames", "sam", "username display mode: sam|upn")
+	flag.StringVar(&hostNameMode, "hostnames", "fqdn", "hostname display mode: hostname|fqdn|both")
+	flag.BoolVar(&schemaSkip, "schema-skip", true, "skip queries when required labels/relationships are missing")
 	flag.StringVar(&neo4jURI, "neo4j-uri", "", "Neo4j URI (e.g. bolt://10.0.0.5:7687). Overrides --neo4j-ip")
 	flag.StringVar(&db, "db", "neo4j", "Neo4j database name")
 	flag.StringVar(&id, "id", "", "run a single query by id")
@@ -124,6 +144,26 @@ FLAGS (including aliases):
 	flag.StringVar(&outPath, "out", "", "structured output file (default stdout)")
 	flag.Parse()
 
+	if showVersion {
+		fmt.Printf("goBloodyEll %s\n", version)
+		if commit != "" {
+			fmt.Printf("commit: %s\n", commit)
+		}
+		if date != "" {
+			fmt.Printf("date: %s\n", date)
+		}
+		return
+	}
+
+	userNameMode = strings.ToLower(strings.TrimSpace(userNameMode))
+	if userNameMode != "sam" && userNameMode != "upn" {
+		fatalf("invalid --usernames %q (expected: sam|upn)", userNameMode)
+	}
+	hostNameMode = strings.ToLower(strings.TrimSpace(hostNameMode))
+	if hostNameMode != "hostname" && hostNameMode != "fqdn" && hostNameMode != "both" {
+		fatalf("invalid --hostnames %q (expected: hostname|fqdn|both)", hostNameMode)
+	}
+
 	if pass == "" {
 		pass = os.Getenv("NEO4J_PASS")
 	}
@@ -135,7 +175,6 @@ FLAGS (including aliases):
 	if includeInfo {
 		qs = append(qs, queries.InfoQueries...)
 	}
-	// Entra pack placeholder: add later by extending registry.
 	if !includeEntra {
 		filtered := qs[:0]
 		for _, q := range qs {
@@ -145,6 +184,9 @@ FLAGS (including aliases):
 		}
 		qs = append([]queries.Query(nil), filtered...)
 	}
+
+	// Apply display modes (usernames/hostnames) to relevant queries.
+	qs = queries.ApplyDisplayModes(qs, userNameMode, hostNameMode)
 	qs, err := queries.FilterCategoryStrict(qs, category)
 	if err != nil {
 		fatalf("%v", err)
@@ -183,16 +225,18 @@ FLAGS (including aliases):
 	}
 	defer driver.Close(ctx)
 
+	sess := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: db})
+	defer sess.Close(ctx)
+
+	sum, err := schema.Discover(ctx, sess)
+	if err != nil {
+		fatalf("schema discovery error: %v", err)
+	}
 	if schemaFlag {
-		sess := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: db})
-		defer sess.Close(ctx)
-		sum, err := schema.Discover(ctx, sess)
-		if err != nil {
-			fatalf("schema error: %v", err)
-		}
 		schema.Print(sum)
 		return
 	}
+	presence := schema.PresenceFromSummary(sum)
 
 	if limit > 0 {
 		fmt.Fprintf(os.Stderr, "[+] Running %d queries (limit=%d, parallel=%d, per-query-timeout=%ds)\n", len(qs), limit, parallel, queryTimeout)
@@ -200,20 +244,31 @@ FLAGS (including aliases):
 		fmt.Fprintf(os.Stderr, "[+] Running %d queries (no row limit, parallel=%d, per-query-timeout=%ds)\n", len(qs), parallel, queryTimeout)
 	}
 
+	outs := make([]report.Output, len(qs))
 	jobs := make([]neo4jrunner.QueryJob, 0, len(qs))
+	jobToQueryIdx := make([]int, 0, len(qs))
+
 	for i, q := range qs {
-		jobs = append(jobs, neo4jrunner.QueryJob{Index: i, ID: q.ID, Name: q.SheetName, Cypher: q.Cypher})
+		if schemaSkip {
+			ok, why := schema.CanRunCypher(q.Cypher, presence)
+			if !ok {
+				outs[i] = report.Output{Query: q, Skipped: true, SkipWhy: why}
+				continue
+			}
+		}
+		jobs = append(jobs, neo4jrunner.QueryJob{Index: len(jobs), ID: q.ID, Name: q.SheetName, Cypher: q.Cypher})
+		jobToQueryIdx = append(jobToQueryIdx, i)
 	}
 
 	results := neo4jrunner.Run(ctx, driver, jobs, neo4jrunner.RunnerOpts{DB: db, Limit: limit, Parallel: parallel, PerQueryTimeout: time.Duration(queryTimeout) * time.Second, Retries: retries, FailFast: failFast, Verbose: true}, neo4jrunner.ExecCypher)
 
-	outs := make([]report.Output, 0, len(qs))
-	for i, r := range results {
+	for j, r := range results {
+		i := jobToQueryIdx[j]
 		o := report.Output{Query: qs[i], Result: r.ResultSet}
 		if r.Err != nil {
 			o.Error = r.Err.Error()
 		}
-		outs = append(outs, o)
+		outs[i] = o
 	}
 
 	if format != "" {

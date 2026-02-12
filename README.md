@@ -4,6 +4,16 @@ Go-based Neo4j query runner for BloodHound-style graphs, focused on **defensive 
 
 > This tool is intended for authorized defensive auditing and remediation planning.
 
+## Install
+
+```bash
+# Install latest (recommended)
+go install github.com/bakw00ds/goBloodyEll@latest
+
+# Ensure Go bin dir is on PATH (common default)
+export PATH="$(go env GOPATH)/bin:$PATH"
+```
+
 ## Build
 
 ```bash

@@ -52,6 +52,41 @@ func main() {
 		timeoutS int
 	)
 
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "goBloodyEll - BloodHound/Neo4j defensive query runner (AD + EntraID)\n\n")
+		fmt.Fprintf(os.Stderr, "USAGE:\n")
+		fmt.Fprintf(os.Stderr, "  goBloodyEll [connection] [query selection] [output]\n\n")
+		fmt.Fprintf(os.Stderr, "CONNECTION:\n")
+		fmt.Fprintf(os.Stderr, "  --neo4j-ip <host>          (default 127.0.0.1)\n")
+		fmt.Fprintf(os.Stderr, "  --neo4j-uri <bolt://...>   overrides --neo4j-ip\n")
+		fmt.Fprintf(os.Stderr, "  --db <name>                (default neo4j)\n")
+		fmt.Fprintf(os.Stderr, "  -u, --username <user>      (default neo4j)\n")
+		fmt.Fprintf(os.Stderr, "  -p, --password <pass>      or env NEO4J_PASS\n\n")
+		fmt.Fprintf(os.Stderr, "QUERY SELECTION:\n")
+		fmt.Fprintf(os.Stderr, "  --list                     list available queries\n")
+		fmt.Fprintf(os.Stderr, "  --schema                   print labels/rel-types/property samples\n")
+		fmt.Fprintf(os.Stderr, "  --id <query-id>            run a single query\n")
+		fmt.Fprintf(os.Stderr, "  --category <all|AD|INFO|EntraID> (default all)\n")
+		fmt.Fprintf(os.Stderr, "  --info                     include INFO queries\n")
+		fmt.Fprintf(os.Stderr, "  --entra                    include EntraID queries\n\n")
+		fmt.Fprintf(os.Stderr, "OUTPUT (choose any; default is console output):\n")
+		fmt.Fprintf(os.Stderr, "  -t, --text <file>          write a text report\n")
+		fmt.Fprintf(os.Stderr, "  -x, --xlsx <file>          write an XLSX report\n")
+		fmt.Fprintf(os.Stderr, "  -v, --verbose              print to console\n")
+		fmt.Fprintf(os.Stderr, "\nSTRUCTURED OUTPUT (optional alternative):\n")
+		fmt.Fprintf(os.Stderr, "  --format <json|csv|text>   structured output\n")
+		fmt.Fprintf(os.Stderr, "  --out <file>               structured output file\n\n")
+		fmt.Fprintf(os.Stderr, "MISC:\n")
+		fmt.Fprintf(os.Stderr, "  --limit <n>                safety cap (default 500)\n")
+		fmt.Fprintf(os.Stderr, "  --timeout <sec>            query timeout (default 30)\n\n")
+		fmt.Fprintf(os.Stderr, "EXAMPLES:\n")
+		fmt.Fprintf(os.Stderr, "  goBloodyEll --list --category AD\n")
+		fmt.Fprintf(os.Stderr, "  NEO4J_PASS=neo4j goBloodyEll --neo4j-ip 10.0.0.5 -x report.xlsx --info\n")
+		fmt.Fprintf(os.Stderr, "  NEO4J_PASS=neo4j goBloodyEll --neo4j-ip 10.0.0.5 --schema\n\n")
+		fmt.Fprintf(os.Stderr, "FLAGS (including aliases):\n")
+		flag.PrintDefaults()
+	}
+
 	// Compatibility-ish flags (based on bloodyEll_example)
 	flag.StringVar(&user, "u", "neo4j", "Neo4j username")
 	flag.StringVar(&user, "username", "neo4j", "Neo4j username")
@@ -71,7 +106,7 @@ func main() {
 	flag.StringVar(&neo4jURI, "neo4j-uri", "", "Neo4j URI (e.g. bolt://10.0.0.5:7687). Overrides --neo4j-ip")
 	flag.StringVar(&db, "db", "neo4j", "Neo4j database name")
 	flag.StringVar(&id, "id", "", "run a single query by id")
-	flag.StringVar(&category, "category", "", "filter queries by category: AD|EntraID|INFO")
+	flag.StringVar(&category, "category", "all", "filter queries by category: all|AD|EntraID|INFO")
 	flag.BoolVar(&list, "list", false, "list available queries")
 	flag.BoolVar(&schema, "schema", false, "print Neo4j schema summary (labels/relationship types/properties)")
 	flag.BoolVar(&includeEntra, "entra", false, "include EntraID queries (best-effort, schema varies)")
@@ -93,7 +128,10 @@ func main() {
 	}
 
 	qs := collectQueries(includeInfo, includeEntra)
-	qs = filterQueries(qs, category)
+	qs, err := filterQueriesStrict(qs, category)
+	if err != nil {
+		fatalf("%v", err)
+	}
 
 	if list {
 		printQueryList(qs)
@@ -118,8 +156,10 @@ func main() {
 		neo4jURI = fmt.Sprintf("bolt://%s:7687", neo4jHost)
 	}
 	if pass == "" {
-		fatalf("missing password (use --pass/--password/-p or NEO4J_PASS)")
+		fatalf("missing password: provide -p/--password or set NEO4J_PASS")
 	}
+
+	fmt.Fprintf(os.Stderr, "[+] Connecting to %s (db=%s) as %s\n", neo4jURI, db, user)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutS)*time.Second)
 	defer cancel()
@@ -141,7 +181,9 @@ func main() {
 	}
 
 	outs := make([]queryOutput, 0, len(qs))
-	for _, q := range qs {
+	fmt.Fprintf(os.Stderr, "[+] Running %d queries (limit=%d)\n", len(qs), limit)
+	for i, q := range qs {
+		fmt.Fprintf(os.Stderr, "[+] (%d/%d) %s [%s]\n", i+1, len(qs), q.SheetName, q.ID)
 		o := queryOutput{Query: q}
 		rows, err := runCypher(ctx, sess, q.Cypher, limit)
 		if err != nil {
@@ -159,6 +201,7 @@ func main() {
 		switch format {
 		case "json", "csv", "text":
 			writeStructured(outs, format, outPath)
+			fmt.Fprintf(os.Stderr, "[+] Success. Wrote structured output to %s\n", firstNonEmpty(outPath, "stdout"))
 			return
 		default:
 			fatalf("invalid --format %q (expected json|csv|text)", format)
@@ -167,18 +210,24 @@ func main() {
 
 	// Example-like output mode
 	if outTxt != "" {
+		fmt.Fprintf(os.Stderr, "[+] Writing text report -> %s\n", outTxt)
 		if err := writeTextFile(outs, outTxt); err != nil {
-			fatalf("write txt: %v", err)
+			fatalf("write txt failed: %v", err)
 		}
+		fmt.Fprintf(os.Stderr, "[+] Wrote text report -> %s\n", outTxt)
 	}
 	if outXLSX != "" {
+		fmt.Fprintf(os.Stderr, "[+] Writing XLSX report -> %s\n", outXLSX)
 		if err := writeXLSX(outs, outXLSX); err != nil {
-			fatalf("write xlsx: %v", err)
+			fatalf("write xlsx failed: %v", err)
 		}
+		fmt.Fprintf(os.Stderr, "[+] Wrote XLSX report -> %s\n", outXLSX)
 	}
 	if verbose {
 		writeConsole(outs)
 	}
+
+	fmt.Fprintf(os.Stderr, "[+] Success.\n")
 }
 
 func collectQueries(includeInfo, includeEntra bool) []Query {
@@ -455,10 +504,14 @@ func writeTextToWriter(w *os.File, outs []queryOutput) error {
 	return nil
 }
 
-func filterQueries(in []Query, category string) []Query {
+func filterQueriesStrict(in []Query, category string) ([]Query, error) {
 	category = strings.TrimSpace(category)
-	if category == "" {
-		return in
+	if category == "" || strings.EqualFold(category, "all") {
+		return in, nil
+	}
+	allowed := map[string]struct{}{"ad": {}, "entraid": {}, "info": {}}
+	if _, ok := allowed[strings.ToLower(category)]; !ok {
+		return nil, fmt.Errorf("invalid --category %q (expected: all|AD|EntraID|INFO)", category)
 	}
 	out := make([]Query, 0)
 	for _, q := range in {
@@ -466,7 +519,7 @@ func filterQueries(in []Query, category string) []Query {
 			out = append(out, q)
 		}
 	}
-	return out
+	return out, nil
 }
 
 func findQueryByID(in []Query, id string) (Query, bool) {
@@ -536,5 +589,13 @@ func headerToKey(h string) string {
 
 func fatalf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "error: "+format+"\n", args...)
+	fmt.Fprintf(os.Stderr, "hint: run with -h for usage/examples\n")
 	os.Exit(2)
+}
+
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
 }

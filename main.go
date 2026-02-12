@@ -110,7 +110,7 @@ func main() {
 	flag.BoolVar(&list, "list", false, "list available queries")
 	flag.BoolVar(&schema, "schema", false, "print Neo4j schema summary (labels/relationship types/properties)")
 	flag.BoolVar(&includeEntra, "entra", false, "include EntraID queries (best-effort, schema varies)")
-	flag.IntVar(&limit, "limit", 500, "max rows per query (safety cap); also appends LIMIT if query lacks one")
+	flag.IntVar(&limit, "limit", 0, "max rows per query (0 = unlimited); if >0, also appends LIMIT if query lacks one")
 	flag.IntVar(&timeoutS, "timeout", 30, "query timeout seconds")
 
 	// Programmatic output (if you want structured output)
@@ -181,7 +181,11 @@ func main() {
 	}
 
 	outs := make([]queryOutput, 0, len(qs))
-	fmt.Fprintf(os.Stderr, "[+] Running %d queries (limit=%d)\n", len(qs), limit)
+	if limit > 0 {
+		fmt.Fprintf(os.Stderr, "[+] Running %d queries (limit=%d)\n", len(qs), limit)
+	} else {
+		fmt.Fprintf(os.Stderr, "[+] Running %d queries (no row limit)\n", len(qs))
+	}
 	for i, q := range qs {
 		fmt.Fprintf(os.Stderr, "[+] (%d/%d) %s [%s]\n", i+1, len(qs), q.SheetName, q.ID)
 		o := queryOutput{Query: q}
@@ -361,9 +365,7 @@ func writeTextFile(outs []queryOutput, path string) error {
 
 func writeXLSX(outs []queryOutput, path string) error {
 	f := excelize.NewFile()
-	// remove default sheet (excelize.NewFile() starts with Sheet1)
-	_ = f.DeleteSheet("Sheet1")
-
+	// excelize.NewFile() starts with Sheet1; we delete it after creating our first real sheet.
 	firstSheet := true
 	for _, o := range outs {
 		sheet := safeSheetName(o.Query.SheetName)
@@ -393,9 +395,10 @@ func writeXLSX(outs []queryOutput, path string) error {
 		}
 		r++
 
-		// Make the first sheet we create the active one.
+		// Make the first sheet we create the active one, and remove the default Sheet1.
 		if firstSheet {
 			f.SetActiveSheet(idx)
+			_ = f.DeleteSheet("Sheet1")
 			firstSheet = false
 		}
 
@@ -597,8 +600,14 @@ func headerToKey(h string) string {
 		return "type"
 	case "description":
 		return "description"
+	case "group names", "group_names":
+		return "group"
 	case "groupname", "group":
 		return "groupname"
+	case "password set", "password_set":
+		return "pwdlastset"
+	case "service acct?", "service_acct?", "service acct", "service_acct":
+		return "service_acct"
 	case "samaccountname":
 		return "samaccountname"
 	case "fqdn":

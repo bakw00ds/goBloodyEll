@@ -45,6 +45,33 @@ ORDER BY samaccountname`,
 RETURN c.name AS fqdn
 ORDER BY fqdn`,
 	},
+	{
+		ID:           "ad-domain-admins",
+		Title:        "Domain Admins",
+		Category:     "AD",
+		SheetName:    "Domain Admins",
+		Headers:      []string{"Principal", "Type"},
+		Description:  "Members of Domain Admins.",
+		FindingTitle: "",
+		Cypher: `MATCH (g:Group)
+WHERE toUpper(g.name) ENDS WITH "DOMAIN ADMINS" OR g.objectid ENDS WITH "-512"
+MATCH (u)-[:MemberOf*1..]->(g)
+RETURN u.name AS principal, labels(u) AS type
+ORDER BY principal`,
+	},
+	{
+		ID:           "ad-domain-controllers",
+		Title:        "Domain Controllers",
+		Category:     "AD",
+		SheetName:    "Domain Controllers",
+		Headers:      []string{"Hostname", "Operating System"},
+		Description:  "Computer objects that are members of the Domain Controllers group.",
+		FindingTitle: "",
+		Cypher: `MATCH (c:Computer)-[:MemberOf*1..]->(g:Group)
+WHERE g.objectid ENDS WITH '-516'
+RETURN c.name AS computer, c.operatingsystem AS os
+ORDER BY computer`,
+	},
 
 	// --- Ported from bloodyEll_example (findings) ---
 	{
@@ -185,33 +212,7 @@ RETURN u.name AS user`,
 	},
 
 	// --- Additional defender cleanup / hygiene ---
-	{
-		ID:           "ad-domain-controllers",
-		Title:        "Domain Controllers",
-		Category:     "AD",
-		SheetName:    "Domain Controllers",
-		Headers:      []string{"Hostname", "Operating System"},
-		Description:  "Computer objects that are members of the Domain Controllers group.",
-		FindingTitle: "",
-		Cypher: `MATCH (c:Computer)-[:MemberOf*1..]->(g:Group)
-WHERE g.objectid ENDS WITH '-516'
-RETURN c.name AS computer, c.operatingsystem AS os
-ORDER BY computer`,
-	},
-	{
-		ID:           "ad-domain-admins",
-		Title:        "Domain Admins",
-		Category:     "AD",
-		SheetName:    "Domain Admins",
-		Headers:      []string{"Principal", "Type"},
-		Description:  "Members of Domain Admins.",
-		FindingTitle: "",
-		Cypher: `MATCH (g:Group)
-WHERE toUpper(g.name) ENDS WITH "DOMAIN ADMINS" OR g.objectid ENDS WITH "-512"
-MATCH (u)-[:MemberOf*1..]->(g)
-RETURN u.name AS principal, labels(u) AS type
-ORDER BY principal`,
-	},
+	// (moved Domain Admins/Controllers up to tabs 3 & 4)
 	{
 		ID:           "ad-admincount",
 		Title:        "adminCount=1 principals",

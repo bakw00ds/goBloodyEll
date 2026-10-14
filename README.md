@@ -64,3 +64,7 @@ CSV output:
 ```
 
 Prints node labels + relationship types, plus a small sample of properties for each.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
